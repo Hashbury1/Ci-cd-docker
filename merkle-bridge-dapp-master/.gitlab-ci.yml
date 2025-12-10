@@ -1,7 +1,65 @@
+# 1. Define the stages in order of execution
 stages:
   - build
+  - test
+  - publish
 
-dummy-job:
+# 2. Define the Docker environment used by the Runner for these jobs
+# We use 'docker:20.10.16-dind' (Docker in Docker) service for building images
+variables:
+  DOCKER_HOST: tcp://docker:2375
+  DOCKER_TLS_CERTDIR: ""
+  # Set the final image name using built-in GitLab variables
+  IMAGE_NAME: $CI_REGISTRY/$CI_PROJECT_PATH/my-app
+
+# --- JOB 1: Build the Docker Image ---
+build-image:
   stage: build
+  image: docker:20.10.16 # Use a standard Docker client image
+  services:
+    - docker:20.10.16-dind # Required to run Docker commands inside the job
   script:
-    - echo "CI pipeline established successfully."
+    - echo "--- Building Docker Image ---"
+    # Build the image using the current commit SHA as a unique tag
+    - docker build -t $IMAGE_NAME:$CI_COMMIT_SHORT_SHA .
+    # Build the image with the 'latest' tag as well
+    - docker tag $IMAGE_NAME:$CI_COMMIT_SHORT_SHA $IMAGE_NAME:latest
+  # Store the image artifact so the next stage can use it to provision containers
+  artifacts:
+    paths:
+      - /
+    expire_in: 1 hour
+
+# --- JOB 2: Run Unit Tests ---
+# This job runs tests *inside* the newly built container image
+run-tests:
+  stage: test
+  image: docker:20.10.16
+  services:
+    - docker:20.10.16-dind
+  script:
+    - echo "--- Running Unit Tests ---"
+    # Pull the image built in the previous stage
+    - docker pull $IMAGE_NAME:$CI_COMMIT_SHORT_SHA
+    # Run the tests defined inside the container's entry point/command
+    # Replace 'npm test' with your actual test command (e.g., 'pytest')
+    - docker run $IMAGE_NAME:$CI_COMMIT_SHORT_SHA npm test
+
+# --- JOB 3: Publish (Push) the Image to Registry ---
+publish-image:
+  stage: publish
+  image: docker:20.10.16
+  services:
+    - docker:20.10.16-dind
+  # Only run for successful pushes to the 'main' branch
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  script:
+    - echo "--- Logging into Registry ---"
+    # Log into the GitLab Container Registry using the CI Job Token
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+
+    - echo "--- Pushing Image to Registry ---"
+    # Push both the SHA-tagged and 'latest' images
+    - docker push $IMAGE_NAME:$CI_COMMIT_SHORT_SHA
+    - docker push $IMAGE_NAME:latest
