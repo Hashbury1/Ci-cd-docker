@@ -1,0 +1,7 @@
+stages:
+  - build
+
+dummy-job:
+  stage: build
+  script:
+    - echo "CI pipeline established successfully."
