@@ -10,7 +10,7 @@ variables:
   DOCKER_TLS_CERTDIR: ""
   IMAGE_NAME: $CI_REGISTRY/$CI_PROJECT_PATH/my-app
 
-# --- Shared Configuration (No Rules) ---
+# --- Shared Configuration ---
 .docker-job:
   image: docker:20.10.16
   services:
@@ -21,11 +21,10 @@ build-image:
   extends: .docker-job
   stage: build
   script:
-    - echo "--- Building Docker Image ---"
+    - echo "--- Building Docker Image (Job 1) ---"
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
     - docker build -t $IMAGE_NAME:$CI_COMMIT_SHORT_SHA .
     - docker push $IMAGE_NAME:$CI_COMMIT_SHORT_SHA
-  # Ensure this job can be used by the next one
 
 
 # --- JOB 2: Run Unit Tests ---
@@ -34,10 +33,14 @@ run-tests:
   stage: test
   needs: ["build-image"]
   script:
-    - echo "--- Running Unit Tests inside Container ---"
+    - echo "--- Running Unit Tests (Job 2) ---"
+    # 🔥 CRITICAL FIX: Login required to pull the image from the registry
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY 
+    # Image pull now works
     - docker pull $IMAGE_NAME:$CI_COMMIT_SHORT_SHA
-    # ***IMPORTANT: Check this line! If 'npm test' is wrong, it fails the job.***
+    # ***IMPORTANT: Check this line!***
     - docker run $IMAGE_NAME:$CI_COMMIT_SHORT_SHA npm test 
+
 
 # --- JOB 3: Publish (Push) the Image to Registry ---
 publish-image:
@@ -45,7 +48,13 @@ publish-image:
   stage: publish
   needs: ["run-tests"]
   script:
-    - echo "--- Pushing Final Tagged Image to Registry ---"
+    - echo "--- Pushing Final Tagged Image (Job 3) ---"
+    # 🔥 CRITICAL FIX: Login required to push the final image
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY 
+    
+    # Pull the verified image
     - docker pull $IMAGE_NAME:$CI_COMMIT_SHORT_SHA
+    
+    # Tag and push the final 'latest' image
     - docker tag $IMAGE_NAME:$CI_COMMIT_SHORT_SHA $IMAGE_NAME:latest
     - docker push $IMAGE_NAME:latest
