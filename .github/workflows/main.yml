@@ -64,11 +64,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ steps.repo-lowercase.outputs.repo_name }}
           tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix={{branch}}-,format=short
+            type=sha,prefix=,format=short
             type=raw,value=latest,enable={{is_default_branch}}
           labels: |
             org.opencontainers.image.title=${{ github.repository }}
@@ -141,7 +137,7 @@ jobs:
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ steps.repo-lowercase.outputs.repo_name }}:${{ github.ref_name }}-${{ steps.sha.outputs.short_sha }}
+          image-ref: ${{ env.REGISTRY }}/${{ steps.repo-lowercase.outputs.repo_name }}:${{ steps.sha.outputs.short_sha }}
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH'
@@ -171,15 +167,6 @@ jobs:
       packages: read
 
     steps:
-      - name: Convert repository name to lowercase
-        id: repo-lowercase
-        run: |
-          echo "repo_name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
-
-      - name: Get short SHA
-        id: sha
-        run: echo "short_sha=$(echo ${{ github.sha }} | cut -c1-8)" >> $GITHUB_OUTPUT
-
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -187,17 +174,32 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Debug - List available images
+        run: |
+          echo "=== Debugging Image Tags ==="
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "Repository (lowercase): ${REPO_LOWER}"
+          echo "Registry: ${{ env.REGISTRY }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "SHA: ${{ github.sha }}"
+          echo "Short SHA: $(echo ${{ github.sha }} | cut -c1-8)"
+
       - name: Pull Docker image
         run: |
-          IMAGE_TAG="${{ env.REGISTRY }}/${{ steps.repo-lowercase.outputs.repo_name }}:${{ github.ref_name }}-${{ steps.sha.outputs.short_sha }}"
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-8)
+          
+          # The image tag format matches what metadata-action creates: just the SHA
+          IMAGE_TAG="${{ env.REGISTRY }}/${REPO_LOWER}:${SHORT_SHA}"
+          
           echo "Pulling image: $IMAGE_TAG"
           docker pull $IMAGE_TAG
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
 
       - name: Run unit tests
         id: run-tests
         run: |
-          IMAGE_TAG="${{ env.REGISTRY }}/${{ steps.repo-lowercase.outputs.repo_name }}:${{ github.ref_name }}-${{ steps.sha.outputs.short_sha }}"
-          echo "Running tests in container..."
+          echo "Running tests in container: $IMAGE_TAG"
           docker run --rm $IMAGE_TAG npm test
 
       - name: Generate test summary
@@ -291,15 +293,18 @@ jobs:
 
       - name: Pull tested image
         run: |
-          IMAGE_TAG="${{ env.REGISTRY }}/${{ steps.repo-lowercase.outputs.repo_name }}:${{ github.ref_name }}-${{ steps.sha.outputs.short_sha }}"
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-8)
+          IMAGE_TAG="${{ env.REGISTRY }}/${REPO_LOWER}:${SHORT_SHA}"
+          
           echo "📥 Pulling tested image: $IMAGE_TAG"
           docker pull $IMAGE_TAG
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
 
       - name: Tag as production
         run: |
-          IMAGE_TAG="${{ env.REGISTRY }}/${{ steps.repo-lowercase.outputs.repo_name }}:${{ github.ref_name }}-${{ steps.sha.outputs.short_sha }}"
-          IMAGE_PROD="${{ env.REGISTRY }}/${{ steps.repo-lowercase.outputs.repo_name }}:production"
-          IMAGE_STABLE="${{ env.REGISTRY }}/${{ steps.repo-lowercase.outputs.repo_name }}:stable"
+          IMAGE_PROD="${{ env.REGISTRY }}/$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]'):production"
+          IMAGE_STABLE="${{ env.REGISTRY }}/$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]'):stable"
           
           echo "🏷️  Tagging as production: $IMAGE_PROD"
           docker tag $IMAGE_TAG $IMAGE_PROD
